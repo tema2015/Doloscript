@@ -10,7 +10,7 @@ local Camera = workspace.CurrentCamera
 local espEnabled = false
 local speedEnabled = false
 local flyEnabled = false
-local fakeCharEnabled = false
+local hitboxEnabled = false
 local thirdPersonEnabled = false
 local currentSpeed = 16
 local currentFlySpeed = 50
@@ -23,31 +23,135 @@ local nameTags = {}
 local espConnections = {}
 local speedConnection = nil
 local flyConnection = nil
-local fakeChar = nil
-local fakeCharConnection = nil
+local flyBodyVelocity = nil
+local flyBodyGyro = nil
+local hitbox = nil
+local hitboxConnection = nil
 local thirdPersonConnection = nil
 
--- ====================== 3RD PERSON ====================== --
-local function updateThirdPerson()
+-- ====================== УЛУЧШЕННЫЙ FLY HACK (Кросс-платформенный) ====================== --
+local function startFlying()
     if not player.Character then return end
     
-    local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
-    if not humanoidRootPart then return end
+    local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+    local rootPart = player.Character:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not rootPart then return end
+
+    humanoid.PlatformStand = true
     
-    if thirdPersonEnabled then
-        Camera.CameraType = Enum.CameraType.Scriptable
-        local offset = Vector3.new(0, 3, -8) -- Отступ камеры (высота 3, расстояние -8)
+    flyBodyVelocity = Instance.new("BodyVelocity")
+    flyBodyVelocity.Velocity = Vector3.new(0, 0, 0)
+    flyBodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    flyBodyVelocity.P = 1000
+    flyBodyVelocity.Parent = rootPart
+
+    flyBodyGyro = Instance.new("BodyGyro")
+    flyBodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    flyBodyGyro.P = 1000
+    flyBodyGyro.D = 50
+    flyBodyGyro.CFrame = rootPart.CFrame
+    flyBodyGyro.Parent = rootPart
+
+    -- Определяем платформу (ПК или мобильное устройство)
+    local isMobile = UIS.TouchEnabled and not UIS.KeyboardEnabled
+    
+    flyConnection = RunService.Heartbeat:Connect(function()
+        if not flyEnabled or not player.Character or not rootPart then return end
         
-        thirdPersonConnection = RunService.Heartbeat:Connect(function()
-            Camera.CFrame = CFrame.new(humanoidRootPart.Position + offset, humanoidRootPart.Position)
-        end)
-    else
-        if thirdPersonConnection then
-            thirdPersonConnection:Disconnect()
-            thirdPersonConnection = nil
+        flyBodyGyro.CFrame = Camera.CFrame
+        
+        local direction = Vector3.new()
+        
+        if isMobile then
+            -- Управление для мобильных устройств (адаптивное)
+            local touchInputs = UIS:GetTouchInputs()
+            for _, touch in ipairs(touchInputs) do
+                if touch.Position.X < 0.3 then -- Левая часть экрана
+                    direction -= Camera.CFrame.RightVector
+                elseif touch.Position.X > 0.7 then -- Правая часть экрана
+                    direction += Camera.CFrame.RightVector
+                elseif touch.Position.Y < 0.3 then -- Нижняя часть экрана
+                    direction -= Camera.CFrame.LookVector
+                elseif touch.Position.Y > 0.7 then -- Верхняя часть экрана
+                    direction += Camera.CFrame.LookVector
+                end
+            end
+        else
+            -- Управление для ПК
+            if UIS:IsKeyDown(Enum.KeyCode.W) then direction += Camera.CFrame.LookVector end
+            if UIS:IsKeyDown(Enum.KeyCode.S) then direction -= Camera.CFrame.LookVector end
+            if UIS:IsKeyDown(Enum.KeyCode.A) then direction -= Camera.CFrame.RightVector end
+            if UIS:IsKeyDown(Enum.KeyCode.D) then direction += Camera.CFrame.RightVector end
         end
-        Camera.CameraType = Enum.CameraType.Custom
+        
+        -- Вверх/вниз (работает на всех платформах)
+        if UIS:IsKeyDown(Enum.KeyCode.Space) or (isMobile and UIS:IsMouseButtonPressed(Enum.UserInputType.Touch)) then
+            direction += Vector3.new(0, 1, 0)
+        elseif UIS:IsKeyDown(Enum.KeyCode.LeftShift) then
+            direction += Vector3.new(0, -1, 0)
+        end
+        
+        if direction.Magnitude > 0 then
+            direction = direction.Unit * currentFlySpeed
+        end
+        
+        flyBodyVelocity.Velocity = direction
+    end)
+end
+
+local function stopFlying()
+    if flyConnection then flyConnection:Disconnect() end
+    if flyBodyVelocity then flyBodyVelocity:Destroy() end
+    if flyBodyGyro then flyBodyGyro:Destroy() end
+    
+    if player.Character then
+        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then humanoid.PlatformStand = false end
     end
+end
+
+-- ====================== HITBOX ====================== --
+local function createHitbox()
+    if hitbox then hitbox:Destroy() end
+    
+    hitbox = Instance.new("Model")
+    hitbox.Name = "PlayerHitbox"
+    
+    local parts = {
+        {Name = "Head", Size = Vector3.new(2, 1, 1), Shape = Enum.PartType.Ball, Color = Color3.new(1, 0, 0)},
+        {Name = "Torso", Size = Vector3.new(2, 2, 1), Color = Color3.new(1, 0.3, 0.3)},
+        {Name = "LeftArm", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3)},
+        {Name = "RightArm", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3)},
+        {Name = "LeftLeg", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3)},
+        {Name = "RightLeg", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3)}
+    }
+
+    for _, partInfo in pairs(parts) do
+        local part = Instance.new("Part")
+        part.Name = partInfo.Name
+        part.Size = partInfo.Size
+        if partInfo.Shape then part.Shape = partInfo.Shape end
+        part.Color = partInfo.Color
+        part.Material = Enum.Material.Neon
+        part.CanCollide = false
+        part.Anchored = true
+        part.Transparency = 0.3
+        part.Parent = hitbox
+    end
+
+    hitbox.PrimaryPart = hitbox:WaitForChild("Torso")
+    hitbox.Parent = Workspace
+
+    hitboxConnection = RunService.Heartbeat:Connect(function()
+        if hitboxEnabled and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            hitbox:SetPrimaryPartCFrame(player.Character.HumanoidRootPart.CFrame)
+        end
+    end)
+end
+
+local function removeHitbox()
+    if hitbox then hitbox:Destroy() end
+    if hitboxConnection then hitboxConnection:Disconnect() end
 end
 
 -- ====================== ESP ====================== --
@@ -63,7 +167,6 @@ local function updatePlayerESP(otherPlayer)
 
     if not humanoidRootPart or not head then return end
 
-    -- Подсветка
     local highlight = Instance.new("Highlight")
     highlight.Name = "ESP_Highlight_"..otherPlayer.Name
     highlight.FillColor = Color3.new(1, 0, 0)
@@ -72,7 +175,6 @@ local function updatePlayerESP(otherPlayer)
     highlight.Parent = character
     highlights[otherPlayer] = highlight
 
-    -- Ник и дистанция
     local nameTag = Instance.new("BillboardGui")
     nameTag.Name = "ESP_NameTag_"..otherPlayer.Name
     nameTag.AlwaysOnTop = true
@@ -94,7 +196,6 @@ local function updatePlayerESP(otherPlayer)
     textLabel.Parent = nameTag
     nameTags[otherPlayer] = nameTag
 
-    -- Обновление видимости
     espConnections[otherPlayer] = RunService.Heartbeat:Connect(function()
         if not character or not humanoidRootPart or not player.Character then return end
         
@@ -141,95 +242,27 @@ local function updateSpeed()
     end
 end
 
--- ====================== FLY HACK ====================== --
-local function startFlying()
+-- ====================== 3RD PERSON ====================== --
+local function updateThirdPerson()
     if not player.Character then return end
-    local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
-
-    humanoid.PlatformStand = true
-    local bodyVelocity = Instance.new("BodyVelocity")
-    bodyVelocity.Velocity = Vector3.new(0, 0, 0)
-    bodyVelocity.MaxForce = Vector3.new(0, math.huge, 0)
-    bodyVelocity.Parent = player.Character:FindFirstChild("HumanoidRootPart")
-
-    flyConnection = RunService.Heartbeat:Connect(function()
-        if not player.Character or not flyEnabled then return end
-        
-        local root = player.Character:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        
-        local cam = Workspace.CurrentCamera
-        local direction = cam.CFrame.LookVector
-
-        if UIS:IsKeyDown(Enum.KeyCode.W) then
-            bodyVelocity.Velocity = direction * currentFlySpeed
-        elseif UIS:IsKeyDown(Enum.KeyCode.S) then
-            bodyVelocity.Velocity = -direction * currentFlySpeed
-        else
-            bodyVelocity.Velocity = Vector3.new(0, 0, 0)
-        end
-    end)
-end
-
-local function stopFlying()
-    if flyConnection then flyConnection:Disconnect() end
-    if player.Character then
-        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
-        if humanoid then humanoid.PlatformStand = false end
-        local root = player.Character:FindFirstChild("HumanoidRootPart")
-        if root then
-            local bodyVelocity = root:FindFirstChildOfClass("BodyVelocity")
-            if bodyVelocity then bodyVelocity:Destroy() end
-        end
-    end
-end
-
--- ====================== FAKE CHARACTER ====================== --
-local function createFakeCharacter()
-    if fakeChar then fakeChar:Destroy() end
     
-    fakeChar = Instance.new("Model")
-    fakeChar.Name = "FakeCharacter"
+    local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return end
     
-    -- Создаем части тела
-    local parts = {
-        {Name = "Head", Size = Vector3.new(2, 1, 1), Shape = Enum.PartType.Ball, Color = Color3.new(1, 0, 0), Position = Vector3.new(0, 1.5, 0)},
-        {Name = "Torso", Size = Vector3.new(2, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(0, 0, 0)},
-        {Name = "LeftArm", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(-1.5, 0, 0)},
-        {Name = "RightArm", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(1.5, 0, 0)},
-        {Name = "LeftLeg", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(-0.5, -2, 0)},
-        {Name = "RightLeg", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(0.5, -2, 0)}
-    }
-
-    for _, partInfo in pairs(parts) do
-        local part = Instance.new("Part")
-        part.Name = partInfo.Name
-        part.Size = partInfo.Size
-        if partInfo.Shape then part.Shape = partInfo.Shape end
-        part.Color = partInfo.Color
-        part.Material = Enum.Material.Neon
-        part.CanCollide = false
-        part.Anchored = true
-        part.Transparency = 0.3
-        part.Position = partInfo.Position
-        part.Parent = fakeChar
-    end
-
-    fakeChar.PrimaryPart = fakeChar:WaitForChild("Torso")
-    fakeChar.Parent = Workspace
-
-    -- Обновление позиции
-    fakeCharConnection = RunService.Heartbeat:Connect(function()
-        if fakeCharEnabled and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            fakeChar:SetPrimaryPartCFrame(player.Character.HumanoidRootPart.CFrame)
+    if thirdPersonEnabled then
+        Camera.CameraType = Enum.CameraType.Scriptable
+        local offset = Vector3.new(0, 3, -8)
+        
+        thirdPersonConnection = RunService.Heartbeat:Connect(function()
+            Camera.CFrame = CFrame.new(humanoidRootPart.Position + offset, humanoidRootPart.Position)
+        end)
+    else
+        if thirdPersonConnection then
+            thirdPersonConnection:Disconnect()
+            thirdPersonConnection = nil
         end
-    end)
-end
-
-local function removeFakeCharacter()
-    if fakeChar then fakeChar:Destroy() end
-    if fakeCharConnection then fakeCharConnection:Disconnect() end
+        Camera.CameraType = Enum.CameraType.Custom
+    end
 end
 
 -- ====================== REJOIN ====================== --
@@ -241,21 +274,64 @@ local function rejoinServer()
     debounce = false
 end
 
+-- ====================== SWORD (Фикс для выдачи в инвентарь) ====================== --
+local function giveSword()
+    if not player.Character then return end
+    
+    -- Удаляем старый меч если есть
+    local backpack = player:FindFirstChild("Backpack")
+    if backpack then
+        local oldSword = backpack:FindFirstChild("Sword") 
+        if oldSword then oldSword:Destroy() end
+    end
+
+    -- Создаем новый меч
+    local sword = Instance.new("Tool")
+    sword.Name = "Sword"
+    sword.Grip = CFrame.new(0, -1, 0) * CFrame.Angles(math.pi/2, 0, 0)
+    
+    -- Создаем рукоять и лезвие
+    local handle = Instance.new("Part")
+    handle.Name = "Handle"
+    handle.Size = Vector3.new(1, 1, 1)
+    handle.Color = Color3.new(139/255, 69/255, 19/255) -- Коричневый
+    handle.Material = Enum.Material.Wood
+    handle.Parent = sword
+    
+    local blade = Instance.new("Part")
+    blade.Name = "Blade"
+    blade.Size = Vector3.new(0.5, 4, 0.2)
+    blade.Color = Color3.new(200/255, 200/255, 200/255) -- Серый
+    blade.Material = Enum.Material.Metal
+    blade.CFrame = handle.CFrame * CFrame.new(0, -2.5, 0)
+    blade.Parent = sword
+    
+    -- Делаем лезвие острым
+    local touchInterest = Instance.new("TouchTransmitter")
+    touchInterest.Parent = blade
+    
+    -- Помещаем в инвентарь (Backpack)
+    local backpack = player:FindFirstChild("Backpack")
+    if backpack then
+        sword.Parent = backpack
+    else
+        -- Если инвентаря нет, создаем временный
+        sword.Parent = player.Character
+    end
+end
+
 -- ====================== GUI ====================== --
 local function createGUI()
-    -- Удаляем старый GUI
     if player:FindFirstChild("PlayerGui") then
-        local oldGui = player.PlayerGui:FindFirstChild("doloscript")
+        local oldGui = player.PlayerGui:FindFirstChild("HackMenu")
         if oldGui then oldGui:Destroy() end
     end
 
-    -- Основной GUI
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "doloscript"
+    screenGui.Name = "HackMenu"
     screenGui.ResetOnSpawn = false
     screenGui.Parent = player:WaitForChild("PlayerGui")
 
-    -- Кнопка открытия
     local openButton = Instance.new("TextButton")
     openButton.Name = "OpenButton"
     openButton.Size = UDim2.new(0, 120, 0, 50)
@@ -265,7 +341,6 @@ local function createGUI()
     openButton.TextColor3 = Color3.new(1, 1, 1)
     openButton.Parent = screenGui
 
-    -- Основное меню
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
     mainFrame.Size = UDim2.new(0, 300, 0, 420)
@@ -274,17 +349,17 @@ local function createGUI()
     mainFrame.Visible = false
     mainFrame.Parent = screenGui
 
-    -- Элементы меню
     local elements = {
         {Type = "TextLabel", Name = "Title", Text = "HACK MENU", Position = UDim2.new(0.1, 0, 0.03, 0), Size = UDim2.new(0, 280, 0, 30), TextSize = 20, BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold},
         {Type = "TextButton", Name = "ESPToggle", Text = "ESP: OFF", Position = UDim2.new(0.1, 0, 0.1, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
         {Type = "TextButton", Name = "SpeedToggle", Text = "SPEED: OFF", Position = UDim2.new(0.1, 0, 0.2, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
         {Type = "TextBox", Name = "SpeedBox", Text = "16", PlaceholderText = "Speed value", Position = UDim2.new(0.1, 0, 0.3, 0), Size = UDim2.new(0, 280, 0, 30), BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)},
         {Type = "TextButton", Name = "FlyToggle", Text = "FLY: OFF", Position = UDim2.new(0.1, 0, 0.4, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
-        {Type = "TextButton", Name = "FakeCharToggle", Text = "HITBOX: OFF", Position = UDim2.new(0.1, 0, 0.5, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextButton", Name = "HitboxToggle", Text = "HITBOX: OFF", Position = UDim2.new(0.1, 0, 0.5, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
         {Type = "TextButton", Name = "ThirdPersonToggle", Text = "3RD PERSON: OFF", Position = UDim2.new(0.1, 0, 0.6, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
-        {Type = "TextButton", Name = "RejoinButton", Text = "REJOIN SERVER", Position = UDim2.new(0.1, 0, 0.7, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.4, 0)},
-        {Type = "TextButton", Name = "CloseButton", Text = "CLOSE", Position = UDim2.new(0.1, 0, 0.8, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.2, 0.2, 0.8)}
+        {Type = "TextButton", Name = "SwordButton", Text = "GET SWORD", Position = UDim2.new(0.1, 0, 0.7, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.5, 0.2, 0)},
+        {Type = "TextButton", Name = "RejoinButton", Text = "REJOIN SERVER", Position = UDim2.new(0.1, 0, 0.8, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.4, 0)},
+        {Type = "TextButton", Name = "CloseButton", Text = "CLOSE", Position = UDim2.new(0.1, 0, 0.9, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.2, 0.2, 0.8)}
     }
 
     for _, element in ipairs(elements) do
@@ -298,7 +373,6 @@ local function createGUI()
         newElement.Parent = mainFrame
     end
 
-    -- Обработчики событий
     openButton.MouseButton1Click:Connect(function()
         mainFrame.Visible = true
         openButton.Visible = false
@@ -342,15 +416,15 @@ local function createGUI()
         end
     end)
 
-    mainFrame:FindFirstChild("FakeCharToggle").MouseButton1Click:Connect(function()
-        fakeCharEnabled = not fakeCharEnabled
-        local button = mainFrame:FindFirstChild("FakeCharToggle")
-        button.Text = fakeCharEnabled and "HITBOX: ON" or "HITBOX: OFF"
-        button.BackgroundColor3 = fakeCharEnabled and Color3.new(0.2, 0.8, 0.2) or Color3.new(0.8, 0.2, 0.2)
-        if fakeCharEnabled then
-            createFakeCharacter()
+    mainFrame:FindFirstChild("HitboxToggle").MouseButton1Click:Connect(function()
+        hitboxEnabled = not hitboxEnabled
+        local button = mainFrame:FindFirstChild("HitboxToggle")
+        button.Text = hitboxEnabled and "HITBOX: ON" or "HITBOX: OFF"
+        button.BackgroundColor3 = hitboxEnabled and Color3.new(0.2, 0.8, 0.2) or Color3.new(0.8, 0.2, 0.2)
+        if hitboxEnabled then
+            createHitbox()
         else
-            removeFakeCharacter()
+            removeHitbox()
         end
     end)
 
@@ -361,6 +435,8 @@ local function createGUI()
         button.BackgroundColor3 = thirdPersonEnabled and Color3.new(0.2, 0.8, 0.2) or Color3.new(0.8, 0.2, 0.2)
         updateThirdPerson()
     end)
+
+    mainFrame:FindFirstChild("SwordButton").MouseButton1Click:Connect(giveSword)
 
     mainFrame:FindFirstChild("SpeedBox"):GetPropertyChangedSignal("Text"):Connect(function()
         local num = tonumber(mainFrame:FindFirstChild("SpeedBox").Text)
@@ -374,7 +450,6 @@ local function createGUI()
 
     mainFrame:FindFirstChild("RejoinButton").MouseButton1Click:Connect(rejoinServer)
 
-    -- Закрытие по Esc
     UIS.InputBegan:Connect(function(input, gameProcessed)
         if input.KeyCode == Enum.KeyCode.Escape and mainFrame.Visible then
             mainFrame.Visible = false
@@ -383,7 +458,7 @@ local function createGUI()
     end)
 end
 
--- ====================== ОСНОВНЫЕ ОБРАБОТЧИКИ ====================== --
+-- ====================== ИНИЦИАЛИЗАЦИЯ ====================== --
 player.CharacterAdded:Connect(function()
     createGUI()
     if speedEnabled then 
@@ -392,9 +467,8 @@ player.CharacterAdded:Connect(function()
     end
     if flyEnabled then startFlying() end
     if espEnabled then updateESP() end
-    if fakeCharEnabled then createFakeCharacter() end
+    if hitboxEnabled then createHitbox() end
     if thirdPersonEnabled then updateThirdPerson() end
 end)
 
--- Первоначальная инициализация
 createGUI()
