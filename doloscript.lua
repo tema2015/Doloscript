@@ -1,0 +1,400 @@
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TeleportService = game:GetService("TeleportService")
+local Workspace = game:GetService("Workspace")
+local Camera = workspace.CurrentCamera
+
+-- Настройки
+local espEnabled = false
+local speedEnabled = false
+local flyEnabled = false
+local fakeCharEnabled = false
+local thirdPersonEnabled = false
+local currentSpeed = 16
+local currentFlySpeed = 50
+local maxDistance = 1000
+local debounce = false
+
+-- Таблицы для хранения объектов
+local highlights = {}
+local nameTags = {}
+local espConnections = {}
+local speedConnection = nil
+local flyConnection = nil
+local fakeChar = nil
+local fakeCharConnection = nil
+local thirdPersonConnection = nil
+
+-- ====================== 3RD PERSON ====================== --
+local function updateThirdPerson()
+    if not player.Character then return end
+    
+    local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return end
+    
+    if thirdPersonEnabled then
+        Camera.CameraType = Enum.CameraType.Scriptable
+        local offset = Vector3.new(0, 3, -8) -- Отступ камеры (высота 3, расстояние -8)
+        
+        thirdPersonConnection = RunService.Heartbeat:Connect(function()
+            Camera.CFrame = CFrame.new(humanoidRootPart.Position + offset, humanoidRootPart.Position)
+        end)
+    else
+        if thirdPersonConnection then
+            thirdPersonConnection:Disconnect()
+            thirdPersonConnection = nil
+        end
+        Camera.CameraType = Enum.CameraType.Custom
+    end
+end
+
+-- ====================== ESP ====================== --
+local function updatePlayerESP(otherPlayer)
+    if highlights[otherPlayer] then highlights[otherPlayer]:Destroy() end
+    if nameTags[otherPlayer] then nameTags[otherPlayer]:Destroy() end
+
+    if not otherPlayer.Character then return end
+
+    local character = otherPlayer.Character
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    local head = character:FindFirstChild("Head")
+
+    if not humanoidRootPart or not head then return end
+
+    -- Подсветка
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "ESP_Highlight_"..otherPlayer.Name
+    highlight.FillColor = Color3.new(1, 0, 0)
+    highlight.OutlineColor = Color3.new(1, 0.5, 0.5)
+    highlight.FillTransparency = 0.5
+    highlight.Parent = character
+    highlights[otherPlayer] = highlight
+
+    -- Ник и дистанция
+    local nameTag = Instance.new("BillboardGui")
+    nameTag.Name = "ESP_NameTag_"..otherPlayer.Name
+    nameTag.AlwaysOnTop = true
+    nameTag.Size = UDim2.new(0, 200, 0, 50)
+    nameTag.StudsOffset = Vector3.new(0, 3, 0)
+    nameTag.Adornee = head
+    nameTag.MaxDistance = maxDistance
+    nameTag.Parent = head
+
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Text = otherPlayer.Name
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.TextColor3 = Color3.new(1, 1, 1)
+    textLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+    textLabel.TextStrokeTransparency = 0.5
+    textLabel.TextSize = 14
+    textLabel.Font = Enum.Font.SourceSansBold
+    textLabel.Parent = nameTag
+    nameTags[otherPlayer] = nameTag
+
+    -- Обновление видимости
+    espConnections[otherPlayer] = RunService.Heartbeat:Connect(function()
+        if not character or not humanoidRootPart or not player.Character then return end
+        
+        local root = player.Character:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        
+        local distance = (humanoidRootPart.Position - root.Position).Magnitude
+        local isVisible = distance <= maxDistance
+        
+        highlight.Enabled = isVisible
+        nameTag.Enabled = isVisible
+        textLabel.Text = isVisible and string.format("%s [%d]", otherPlayer.Name, math.floor(distance)) or ""
+    end)
+end
+
+local function clearESP()
+    for _, highlight in pairs(highlights) do highlight:Destroy() end
+    for _, nameTag in pairs(nameTags) do nameTag:Destroy() end
+    for _, conn in pairs(espConnections) do conn:Disconnect() end
+    highlights = {}
+    nameTags = {}
+    espConnections = {}
+end
+
+local function updateESP()
+    clearESP()
+    if espEnabled then
+        for _, otherPlayer in ipairs(Players:GetPlayers()) do
+            if otherPlayer ~= player then
+                if otherPlayer.Character then updatePlayerESP(otherPlayer) end
+                otherPlayer.CharacterAdded:Connect(function()
+                    if espEnabled then updatePlayerESP(otherPlayer) end
+                end)
+            end
+        end
+    end
+end
+
+-- ====================== SPEED HACK ====================== --
+local function updateSpeed()
+    if speedEnabled and player.Character then
+        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then humanoid.WalkSpeed = currentSpeed end
+    end
+end
+
+-- ====================== FLY HACK ====================== --
+local function startFlying()
+    if not player.Character then return end
+    local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+
+    humanoid.PlatformStand = true
+    local bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+    bodyVelocity.MaxForce = Vector3.new(0, math.huge, 0)
+    bodyVelocity.Parent = player.Character:FindFirstChild("HumanoidRootPart")
+
+    flyConnection = RunService.Heartbeat:Connect(function()
+        if not player.Character or not flyEnabled then return end
+        
+        local root = player.Character:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        
+        local cam = Workspace.CurrentCamera
+        local direction = cam.CFrame.LookVector
+
+        if UIS:IsKeyDown(Enum.KeyCode.W) then
+            bodyVelocity.Velocity = direction * currentFlySpeed
+        elseif UIS:IsKeyDown(Enum.KeyCode.S) then
+            bodyVelocity.Velocity = -direction * currentFlySpeed
+        else
+            bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+        end
+    end)
+end
+
+local function stopFlying()
+    if flyConnection then flyConnection:Disconnect() end
+    if player.Character then
+        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then humanoid.PlatformStand = false end
+        local root = player.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            local bodyVelocity = root:FindFirstChildOfClass("BodyVelocity")
+            if bodyVelocity then bodyVelocity:Destroy() end
+        end
+    end
+end
+
+-- ====================== FAKE CHARACTER ====================== --
+local function createFakeCharacter()
+    if fakeChar then fakeChar:Destroy() end
+    
+    fakeChar = Instance.new("Model")
+    fakeChar.Name = "FakeCharacter"
+    
+    -- Создаем части тела
+    local parts = {
+        {Name = "Head", Size = Vector3.new(2, 1, 1), Shape = Enum.PartType.Ball, Color = Color3.new(1, 0, 0), Position = Vector3.new(0, 1.5, 0)},
+        {Name = "Torso", Size = Vector3.new(2, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(0, 0, 0)},
+        {Name = "LeftArm", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(-1.5, 0, 0)},
+        {Name = "RightArm", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(1.5, 0, 0)},
+        {Name = "LeftLeg", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(-0.5, -2, 0)},
+        {Name = "RightLeg", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(0.5, -2, 0)}
+    }
+
+    for _, partInfo in pairs(parts) do
+        local part = Instance.new("Part")
+        part.Name = partInfo.Name
+        part.Size = partInfo.Size
+        if partInfo.Shape then part.Shape = partInfo.Shape end
+        part.Color = partInfo.Color
+        part.Material = Enum.Material.Neon
+        part.CanCollide = false
+        part.Anchored = true
+        part.Transparency = 0.3
+        part.Position = partInfo.Position
+        part.Parent = fakeChar
+    end
+
+    fakeChar.PrimaryPart = fakeChar:WaitForChild("Torso")
+    fakeChar.Parent = Workspace
+
+    -- Обновление позиции
+    fakeCharConnection = RunService.Heartbeat:Connect(function()
+        if fakeCharEnabled and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            fakeChar:SetPrimaryPartCFrame(player.Character.HumanoidRootPart.CFrame)
+        end
+    end)
+end
+
+local function removeFakeCharacter()
+    if fakeChar then fakeChar:Destroy() end
+    if fakeCharConnection then fakeCharConnection:Disconnect() end
+end
+
+-- ====================== REJOIN ====================== --
+local function rejoinServer()
+    if debounce then return end
+    debounce = true
+    TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player)
+    task.wait(3)
+    debounce = false
+end
+
+-- ====================== GUI ====================== --
+local function createGUI()
+    -- Удаляем старый GUI
+    if player:FindFirstChild("PlayerGui") then
+        local oldGui = player.PlayerGui:FindFirstChild("doloscript")
+        if oldGui then oldGui:Destroy() end
+    end
+
+    -- Основной GUI
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "doloscript"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+
+    -- Кнопка открытия
+    local openButton = Instance.new("TextButton")
+    openButton.Name = "OpenButton"
+    openButton.Size = UDim2.new(0, 120, 0, 50)
+    openButton.Position = UDim2.new(0.5, -60, 0.9, -25)
+    openButton.Text = "OPEN MENU"
+    openButton.BackgroundColor3 = Color3.new(0.2, 0.6, 1)
+    openButton.TextColor3 = Color3.new(1, 1, 1)
+    openButton.Parent = screenGui
+
+    -- Основное меню
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.new(0, 300, 0, 420)
+    mainFrame.Position = UDim2.new(0.5, -150, 0.5, -210)
+    mainFrame.BackgroundColor3 = Color3.new(0.1, 0.1, 0.1)
+    mainFrame.Visible = false
+    mainFrame.Parent = screenGui
+
+    -- Элементы меню
+    local elements = {
+        {Type = "TextLabel", Name = "Title", Text = "HACK MENU", Position = UDim2.new(0.1, 0, 0.03, 0), Size = UDim2.new(0, 280, 0, 30), TextSize = 20, BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold},
+        {Type = "TextButton", Name = "ESPToggle", Text = "ESP: OFF", Position = UDim2.new(0.1, 0, 0.1, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextButton", Name = "SpeedToggle", Text = "SPEED: OFF", Position = UDim2.new(0.1, 0, 0.2, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextBox", Name = "SpeedBox", Text = "16", PlaceholderText = "Speed value", Position = UDim2.new(0.1, 0, 0.3, 0), Size = UDim2.new(0, 280, 0, 30), BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)},
+        {Type = "TextButton", Name = "FlyToggle", Text = "FLY: OFF", Position = UDim2.new(0.1, 0, 0.4, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextButton", Name = "FakeCharToggle", Text = "HITBOX: OFF", Position = UDim2.new(0.1, 0, 0.5, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextButton", Name = "ThirdPersonToggle", Text = "3RD PERSON: OFF", Position = UDim2.new(0.1, 0, 0.6, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextButton", Name = "RejoinButton", Text = "REJOIN SERVER", Position = UDim2.new(0.1, 0, 0.7, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.4, 0)},
+        {Type = "TextButton", Name = "CloseButton", Text = "CLOSE", Position = UDim2.new(0.1, 0, 0.8, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.2, 0.2, 0.8)}
+    }
+
+    for _, element in ipairs(elements) do
+        local newElement = Instance.new(element.Type)
+        for prop, value in pairs(element) do
+            if prop ~= "Type" then
+                newElement[prop] = value
+            end
+        end
+        newElement.TextColor3 = Color3.new(1, 1, 1)
+        newElement.Parent = mainFrame
+    end
+
+    -- Обработчики событий
+    openButton.MouseButton1Click:Connect(function()
+        mainFrame.Visible = true
+        openButton.Visible = false
+    end)
+
+    mainFrame:FindFirstChild("CloseButton").MouseButton1Click:Connect(function()
+        mainFrame.Visible = false
+        openButton.Visible = true
+    end)
+
+    mainFrame:FindFirstChild("ESPToggle").MouseButton1Click:Connect(function()
+        espEnabled = not espEnabled
+        local button = mainFrame:FindFirstChild("ESPToggle")
+        button.Text = espEnabled and "ESP: ON" or "ESP: OFF"
+        button.BackgroundColor3 = espEnabled and Color3.new(0.2, 0.8, 0.2) or Color3.new(0.8, 0.2, 0.2)
+        updateESP()
+    end)
+
+    mainFrame:FindFirstChild("SpeedToggle").MouseButton1Click:Connect(function()
+        speedEnabled = not speedEnabled
+        local button = mainFrame:FindFirstChild("SpeedToggle")
+        button.Text = speedEnabled and "SPEED: ON" or "SPEED: OFF"
+        button.BackgroundColor3 = speedEnabled and Color3.new(0.2, 0.8, 0.2) or Color3.new(0.8, 0.2, 0.2)
+        if speedEnabled then
+            updateSpeed()
+            speedConnection = RunService.Heartbeat:Connect(updateSpeed)
+        elseif speedConnection then
+            speedConnection:Disconnect()
+        end
+    end)
+
+    mainFrame:FindFirstChild("FlyToggle").MouseButton1Click:Connect(function()
+        flyEnabled = not flyEnabled
+        local button = mainFrame:FindFirstChild("FlyToggle")
+        button.Text = flyEnabled and "FLY: ON" or "FLY: OFF"
+        button.BackgroundColor3 = flyEnabled and Color3.new(0.2, 0.8, 0.2) or Color3.new(0.8, 0.2, 0.2)
+        if flyEnabled then
+            startFlying()
+        else
+            stopFlying()
+        end
+    end)
+
+    mainFrame:FindFirstChild("FakeCharToggle").MouseButton1Click:Connect(function()
+        fakeCharEnabled = not fakeCharEnabled
+        local button = mainFrame:FindFirstChild("FakeCharToggle")
+        button.Text = fakeCharEnabled and "HITBOX: ON" or "HITBOX: OFF"
+        button.BackgroundColor3 = fakeCharEnabled and Color3.new(0.2, 0.8, 0.2) or Color3.new(0.8, 0.2, 0.2)
+        if fakeCharEnabled then
+            createFakeCharacter()
+        else
+            removeFakeCharacter()
+        end
+    end)
+
+    mainFrame:FindFirstChild("ThirdPersonToggle").MouseButton1Click:Connect(function()
+        thirdPersonEnabled = not thirdPersonEnabled
+        local button = mainFrame:FindFirstChild("ThirdPersonToggle")
+        button.Text = thirdPersonEnabled and "3RD PERSON: ON" or "3RD PERSON: OFF"
+        button.BackgroundColor3 = thirdPersonEnabled and Color3.new(0.2, 0.8, 0.2) or Color3.new(0.8, 0.2, 0.2)
+        updateThirdPerson()
+    end)
+
+    mainFrame:FindFirstChild("SpeedBox"):GetPropertyChangedSignal("Text"):Connect(function()
+        local num = tonumber(mainFrame:FindFirstChild("SpeedBox").Text)
+        if num then
+            currentSpeed = num
+            if speedEnabled then
+                updateSpeed()
+            end
+        end
+    end)
+
+    mainFrame:FindFirstChild("RejoinButton").MouseButton1Click:Connect(rejoinServer)
+
+    -- Закрытие по Esc
+    UIS.InputBegan:Connect(function(input, gameProcessed)
+        if input.KeyCode == Enum.KeyCode.Escape and mainFrame.Visible then
+            mainFrame.Visible = false
+            openButton.Visible = true
+        end
+    end)
+end
+
+-- ====================== ОСНОВНЫЕ ОБРАБОТЧИКИ ====================== --
+player.CharacterAdded:Connect(function()
+    createGUI()
+    if speedEnabled then 
+        updateSpeed()
+        speedConnection = RunService.Heartbeat:Connect(updateSpeed)
+    end
+    if flyEnabled then startFlying() end
+    if espEnabled then updateESP() end
+    if fakeCharEnabled then createFakeCharacter() end
+    if thirdPersonEnabled then updateThirdPerson() end
+end)
+
+-- Первоначальная инициализация
+createGUI()
