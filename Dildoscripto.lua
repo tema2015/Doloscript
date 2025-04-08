@@ -251,7 +251,7 @@ local function createGUI()
 
     -- Основной GUI
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "HackMenu"
+    screenGui.Name = "doloscript"
     screenGui.ResetOnSpawn = false
     screenGui.Parent = player:WaitForChild("PlayerGui")
 
