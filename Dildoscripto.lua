@@ -9,13 +9,219 @@ local Workspace = game:GetService("Workspace")
 local espEnabled = false
 local speedEnabled = false
 local flyEnabled = false
+local fakeCharEnabled = false
 local currentSpeed = 16
 local currentFlySpeed = 50
+local maxDistance = 5000
+local debounce = false
+
+-- Таблицы для хранения объектов
 local highlights = {}
+local nameTags = {}
+local espConnections = {}
 local speedConnection = nil
 local flyConnection = nil
+local fakeChar = nil
+local fakeCharConnection = nil
 
--- Функция создания GUI
+-- ====================== ESP Логика ====================== --
+local function updatePlayerESP(otherPlayer)
+    if highlights[otherPlayer] then highlights[otherPlayer]:Destroy() end
+    if nameTags[otherPlayer] then nameTags[otherPlayer]:Destroy() end
+
+    if not otherPlayer.Character then return end
+
+    local character = otherPlayer.Character
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    local head = character:FindFirstChild("Head")
+
+    if not humanoidRootPart or not head then return end
+
+    -- Подсветка
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "ESP_Highlight_"..otherPlayer.Name
+    highlight.FillColor = Color3.new(1, 0, 0)
+    highlight.OutlineColor = Color3.new(1, 0.5, 0.5)
+    highlight.FillTransparency = 0.5
+    highlight.Parent = character
+    highlights[otherPlayer] = highlight
+
+    -- Ник и дистанция
+    local nameTag = Instance.new("BillboardGui")
+    nameTag.Name = "ESP_NameTag_"..otherPlayer.Name
+    nameTag.AlwaysOnTop = true
+    nameTag.Size = UDim2.new(0, 200, 0, 50)
+    nameTag.StudsOffset = Vector3.new(0, 3, 0)
+    nameTag.Adornee = head
+    nameTag.MaxDistance = maxDistance
+    nameTag.Parent = head
+
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Text = otherPlayer.Name
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.TextColor3 = Color3.new(1, 1, 1)
+    textLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+    textLabel.TextStrokeTransparency = 0.5
+    textLabel.TextSize = 14
+    textLabel.Font = Enum.Font.SourceSansBold
+    textLabel.Parent = nameTag
+    nameTags[otherPlayer] = nameTag
+
+    -- Обновление видимости
+    espConnections[otherPlayer] = RunService.Heartbeat:Connect(function()
+        if not character or not humanoidRootPart or not player.Character then return end
+        
+        local root = player.Character:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        
+        local distance = (humanoidRootPart.Position - root.Position).Magnitude
+        local isVisible = distance <= maxDistance
+        
+        highlight.Enabled = isVisible
+        nameTag.Enabled = isVisible
+        textLabel.Text = isVisible and string.format("%s [%d]", otherPlayer.Name, math.floor(distance)) or ""
+    end)
+end
+
+local function clearESP()
+    for _, highlight in pairs(highlights) do highlight:Destroy() end
+    for _, nameTag in pairs(nameTags) do nameTag:Destroy() end
+    for _, conn in pairs(espConnections) do conn:Disconnect() end
+    highlights = {}
+    nameTags = {}
+    espConnections = {}
+end
+
+local function updateESP()
+    clearESP()
+    if espEnabled then
+        for _, otherPlayer in ipairs(Players:GetPlayers()) do
+            if otherPlayer ~= player then
+                if otherPlayer.Character then 
+                    updatePlayerESP(otherPlayer) 
+                end
+                otherPlayer.CharacterAdded:Connect(function()
+                    if espEnabled then 
+                        updatePlayerESP(otherPlayer) 
+                    end
+                end)
+            end
+        end
+    end
+end
+
+-- ====================== Speed Hack ====================== --
+local function updateSpeed()
+    if speedEnabled and player.Character then
+        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then 
+            humanoid.WalkSpeed = currentSpeed 
+        end
+    end
+end
+
+-- ====================== Fly Hack ====================== --
+local function startFlying()
+    if not player.Character then return end
+    local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+
+    humanoid.PlatformStand = true
+    local bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+    bodyVelocity.MaxForce = Vector3.new(0, math.huge, 0)
+    bodyVelocity.Parent = player.Character:FindFirstChild("HumanoidRootPart")
+
+    flyConnection = RunService.Heartbeat:Connect(function()
+        if not player.Character or not flyEnabled then return end
+        
+        local root = player.Character:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        
+        local cam = Workspace.CurrentCamera
+        local direction = cam.CFrame.LookVector
+
+        if UIS:IsKeyDown(Enum.KeyCode.W) then
+            bodyVelocity.Velocity = direction * currentFlySpeed
+        elseif UIS:IsKeyDown(Enum.KeyCode.S) then
+            bodyVelocity.Velocity = -direction * currentFlySpeed
+        else
+            bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+        end
+    end)
+end
+
+local function stopFlying()
+    if flyConnection then flyConnection:Disconnect() end
+    if player.Character then
+        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then humanoid.PlatformStand = false end
+        local root = player.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            local bodyVelocity = root:FindFirstChildOfClass("BodyVelocity")
+            if bodyVelocity then bodyVelocity:Destroy() end
+        end
+    end
+end
+
+-- ====================== Fake Character ====================== --
+local function createFakeCharacter()
+    if fakeChar then fakeChar:Destroy() end
+    
+    fakeChar = Instance.new("Model")
+    fakeChar.Name = "FakeCharacter"
+    
+    -- Создаем части тела
+    local parts = {
+        {Name = "Head", Size = Vector3.new(2, 1, 1), Shape = Enum.PartType.Ball, Color = Color3.new(1, 0, 0), Position = Vector3.new(0, 1.5, 0)},
+        {Name = "Torso", Size = Vector3.new(2, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(0, 0, 0)},
+        {Name = "LeftArm", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(-1.5, 0, 0)},
+        {Name = "RightArm", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(1.5, 0, 0)},
+        {Name = "LeftLeg", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(-0.5, -2, 0)},
+        {Name = "RightLeg", Size = Vector3.new(1, 2, 1), Color = Color3.new(1, 0.3, 0.3), Position = Vector3.new(0.5, -2, 0)}
+    }
+
+    for _, partInfo in pairs(parts) do
+        local part = Instance.new("Part")
+        part.Name = partInfo.Name
+        part.Size = partInfo.Size
+        if partInfo.Shape then part.Shape = partInfo.Shape end
+        part.Color = partInfo.Color
+        part.Material = Enum.Material.Neon
+        part.CanCollide = false
+        part.Anchored = true
+        part.Transparency = 0.3
+        part.Position = partInfo.Position
+        part.Parent = fakeChar
+    end
+
+    fakeChar.PrimaryPart = fakeChar:WaitForChild("Torso")
+    fakeChar.Parent = Workspace
+
+    -- Обновление позиции
+    fakeCharConnection = RunService.Heartbeat:Connect(function()
+        if fakeCharEnabled and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            fakeChar:SetPrimaryPartCFrame(player.Character.HumanoidRootPart.CFrame)
+        end
+    end)
+end
+
+local function removeFakeCharacter()
+    if fakeChar then fakeChar:Destroy() end
+    if fakeCharConnection then fakeCharConnection:Disconnect() end
+end
+
+-- ====================== Rejoin ====================== --
+local function rejoinServer()
+    if debounce then return end
+    debounce = true
+    TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player)
+    task.wait(3)
+    debounce = false
+end
+
+-- ====================== GUI ====================== --
 local function createGUI()
     -- Удаляем старый GUI
     if player:FindFirstChild("PlayerGui") then
@@ -42,8 +248,8 @@ local function createGUI()
     -- Основное меню
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 300, 0, 350)
-    mainFrame.Position = UDim2.new(0.5, -150, 0.5, -175)
+    mainFrame.Size = UDim2.new(0, 300, 0, 380)
+    mainFrame.Position = UDim2.new(0.5, -150, 0.5, -190)
     mainFrame.BackgroundColor3 = Color3.new(0.1, 0.1, 0.1)
     mainFrame.Visible = false
     mainFrame.Parent = screenGui
@@ -51,17 +257,12 @@ local function createGUI()
     -- Элементы меню
     local elements = {
         {Type = "TextLabel", Name = "Title", Text = "HACK MENU", Position = UDim2.new(0.1, 0, 0.03, 0), Size = UDim2.new(0, 280, 0, 30), TextSize = 20, BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold},
-        
-        {Type = "TextButton", Name = "ESPToggle", Text = "ESP: OFF", Position = UDim2.new(0.1, 0, 0.15, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
-        
-        {Type = "TextButton", Name = "SpeedToggle", Text = "SPEED: OFF", Position = UDim2.new(0.1, 0, 0.3, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
-        
-        {Type = "TextBox", Name = "SpeedBox", Text = "16", PlaceholderText = "Speed value", Position = UDim2.new(0.1, 0, 0.45, 0), Size = UDim2.new(0, 280, 0, 30), BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)},
-        
-        {Type = "TextButton", Name = "FlyToggle", Text = "FLY: OFF", Position = UDim2.new(0.1, 0, 0.6, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
-        
-        {Type = "TextButton", Name = "RejoinButton", Text = "REJOIN SERVER", Position = UDim2.new(0.1, 0, 0.75, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.4, 0)},
-        
+        {Type = "TextButton", Name = "ESPToggle", Text = "ESP: OFF", Position = UDim2.new(0.1, 0, 0.12, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextButton", Name = "SpeedToggle", Text = "SPEED: OFF", Position = UDim2.new(0.1, 0, 0.25, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextBox", Name = "SpeedBox", Text = "16", PlaceholderText = "Speed value", Position = UDim2.new(0.1, 0, 0.38, 0), Size = UDim2.new(0, 280, 0, 30), BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)},
+        {Type = "TextButton", Name = "FlyToggle", Text = "FLY: OFF", Position = UDim2.new(0.1, 0, 0.51, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextButton", Name = "FakeCharToggle", Text = "hitbox: OFF", Position = UDim2.new(0.1, 0, 0.64, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextButton", Name = "RejoinButton", Text = "REJOIN SERVER", Position = UDim2.new(0.1, 0, 0.77, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.4, 0)},
         {Type = "TextButton", Name = "CloseButton", Text = "CLOSE", Position = UDim2.new(0.1, 0, 0.9, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.2, 0.2, 0.8)}
     }
 
@@ -76,113 +277,7 @@ local function createGUI()
         newElement.Parent = mainFrame
     end
 
-    -- Логика ESP
-    local function highlightPlayer(playerToHighlight)
-        if not playerToHighlight.Character then
-            playerToHighlight.CharacterAdded:Wait()
-        end
-        local highlight = Instance.new("Highlight")
-        highlight.FillColor = Color3.new(1, 0, 0)
-        highlight.OutlineColor = Color3.new(1, 0.5, 0.5)
-        highlight.Parent = playerToHighlight.Character
-        highlights[playerToHighlight] = highlight
-
-        playerToHighlight.CharacterAdded:Connect(function(newChar)
-            if highlights[playerToHighlight] then
-                highlights[playerToHighlight].Parent = newChar
-            end
-        end)
-    end
-
-    local function clearHighlights()
-        for _, highlight in pairs(highlights) do
-            highlight:Destroy()
-        end
-        highlights = {}
-    end
-
-    local function updateESP()
-        clearHighlights()
-        if espEnabled then
-            for _, otherPlayer in ipairs(Players:GetPlayers()) do
-                if otherPlayer ~= player then
-                    highlightPlayer(otherPlayer)
-                end
-            end
-        end
-    end
-
-    -- Логика Speed Hack
-    local function updateSpeed()
-        if speedEnabled and player.Character then
-            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                humanoid.WalkSpeed = currentSpeed
-            end
-        end
-    end
-
-    -- Логика Fly Hack
-    local function startFlying()
-        if not player.Character then return end
-        
-        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
-        if not humanoid then return end
-        
-        humanoid.PlatformStand = true
-        
-        local bodyVelocity = Instance.new("BodyVelocity")
-        bodyVelocity.Velocity = Vector3.new(0, 0, 0)
-        bodyVelocity.MaxForce = Vector3.new(0, math.huge, 0)
-        bodyVelocity.Parent = player.Character:FindFirstChild("HumanoidRootPart")
-        
-        flyConnection = RunService.Heartbeat:Connect(function()
-            if not player.Character or not flyEnabled then return end
-            
-            local root = player.Character:FindFirstChild("HumanoidRootPart")
-            if not root then return end
-            
-            local cam = Workspace.CurrentCamera
-            local direction = cam.CFrame.LookVector
-            
-            if UIS:IsKeyDown(Enum.KeyCode.W) then
-                bodyVelocity.Velocity = direction * currentFlySpeed
-            elseif UIS:IsKeyDown(Enum.KeyCode.S) then
-                bodyVelocity.Velocity = -direction * currentFlySpeed
-            else
-                bodyVelocity.Velocity = Vector3.new(0, 0, 0)
-            end
-        end)
-    end
-
-    local function stopFlying()
-        if flyConnection then
-            flyConnection:Disconnect()
-            flyConnection = nil
-        end
-        
-        if player.Character then
-            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                humanoid.PlatformStand = false
-            end
-            
-            local root = player.Character:FindFirstChild("HumanoidRootPart")
-            if root then
-                local bodyVelocity = root:FindFirstChildOfClass("BodyVelocity")
-                if bodyVelocity then
-                    bodyVelocity:Destroy()
-                end
-            end
-        end
-    end
-
-    -- Логика Rejoin
-    local function rejoinServer()
-        TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player)
-    end
-
-    -- Обработчики кнопок
+    -- Обработчики событий
     openButton.MouseButton1Click:Connect(function()
         mainFrame.Visible = true
         openButton.Visible = false
@@ -211,7 +306,6 @@ local function createGUI()
             speedConnection = RunService.Heartbeat:Connect(updateSpeed)
         elseif speedConnection then
             speedConnection:Disconnect()
-            speedConnection = nil
         end
     end)
 
@@ -224,6 +318,18 @@ local function createGUI()
             startFlying()
         else
             stopFlying()
+        end
+    end)
+
+    mainFrame:FindFirstChild("FakeCharToggle").MouseButton1Click:Connect(function()
+        fakeCharEnabled = not fakeCharEnabled
+        local button = mainFrame:FindFirstChild("FakeCharToggle")
+        button.Text = fakeCharEnabled and "hitbox: ON" or "hitbox: OFF"
+        button.BackgroundColor3 = fakeCharEnabled and Color3.new(0.2, 0.8, 0.2) or Color3.new(0.8, 0.2, 0.2)
+        if fakeCharEnabled then
+            createFakeCharacter()
+        else
+            removeFakeCharacter()
         end
     end)
 
@@ -248,24 +354,17 @@ local function createGUI()
     end)
 end
 
--- Обработчик возрождения
+-- ====================== Основные обработчики ====================== --
 player.CharacterAdded:Connect(function()
     createGUI()
-    
-    -- Восстановление состояний
-    if speedEnabled then
+    if speedEnabled then 
         updateSpeed()
         speedConnection = RunService.Heartbeat:Connect(updateSpeed)
     end
-    
-    if flyEnabled then
-        startFlying()
-    end
-    
-    if espEnabled then
-        updateESP()
-    end
+    if flyEnabled then startFlying() end
+    if espEnabled then updateESP() end
+    if fakeCharEnabled then createFakeCharacter() end
 end)
 
--- Первое создание GUI
+-- Первоначальная инициализация
 createGUI()
