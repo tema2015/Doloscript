@@ -4,15 +4,17 @@ local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TeleportService = game:GetService("TeleportService")
 local Workspace = game:GetService("Workspace")
+local Camera = workspace.CurrentCamera
 
 -- Настройки
 local espEnabled = false
 local speedEnabled = false
 local flyEnabled = false
 local fakeCharEnabled = false
+local thirdPersonEnabled = false
 local currentSpeed = 16
 local currentFlySpeed = 50
-local maxDistance = 5000
+local maxDistance = 1000
 local debounce = false
 
 -- Таблицы для хранения объектов
@@ -23,8 +25,32 @@ local speedConnection = nil
 local flyConnection = nil
 local fakeChar = nil
 local fakeCharConnection = nil
+local thirdPersonConnection = nil
 
--- ====================== ESP Логика ====================== --
+-- ====================== 3RD PERSON ====================== --
+local function updateThirdPerson()
+    if not player.Character then return end
+    
+    local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return end
+    
+    if thirdPersonEnabled then
+        Camera.CameraType = Enum.CameraType.Scriptable
+        local offset = Vector3.new(0, 3, -8) -- Отступ камеры (высота 3, расстояние -8)
+        
+        thirdPersonConnection = RunService.Heartbeat:Connect(function()
+            Camera.CFrame = CFrame.new(humanoidRootPart.Position + offset, humanoidRootPart.Position)
+        end)
+    else
+        if thirdPersonConnection then
+            thirdPersonConnection:Disconnect()
+            thirdPersonConnection = nil
+        end
+        Camera.CameraType = Enum.CameraType.Custom
+    end
+end
+
+-- ====================== ESP ====================== --
 local function updatePlayerESP(otherPlayer)
     if highlights[otherPlayer] then highlights[otherPlayer]:Destroy() end
     if nameTags[otherPlayer] then nameTags[otherPlayer]:Destroy() end
@@ -98,30 +124,24 @@ local function updateESP()
     if espEnabled then
         for _, otherPlayer in ipairs(Players:GetPlayers()) do
             if otherPlayer ~= player then
-                if otherPlayer.Character then 
-                    updatePlayerESP(otherPlayer) 
-                end
+                if otherPlayer.Character then updatePlayerESP(otherPlayer) end
                 otherPlayer.CharacterAdded:Connect(function()
-                    if espEnabled then 
-                        updatePlayerESP(otherPlayer) 
-                    end
+                    if espEnabled then updatePlayerESP(otherPlayer) end
                 end)
             end
         end
     end
 end
 
--- ====================== Speed Hack ====================== --
+-- ====================== SPEED HACK ====================== --
 local function updateSpeed()
     if speedEnabled and player.Character then
         local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
-        if humanoid then 
-            humanoid.WalkSpeed = currentSpeed 
-        end
+        if humanoid then humanoid.WalkSpeed = currentSpeed end
     end
 end
 
--- ====================== Fly Hack ====================== --
+-- ====================== FLY HACK ====================== --
 local function startFlying()
     if not player.Character then return end
     local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
@@ -165,7 +185,7 @@ local function stopFlying()
     end
 end
 
--- ====================== Fake Character ====================== --
+-- ====================== FAKE CHARACTER ====================== --
 local function createFakeCharacter()
     if fakeChar then fakeChar:Destroy() end
     
@@ -212,7 +232,7 @@ local function removeFakeCharacter()
     if fakeCharConnection then fakeCharConnection:Disconnect() end
 end
 
--- ====================== Rejoin ====================== --
+-- ====================== REJOIN ====================== --
 local function rejoinServer()
     if debounce then return end
     debounce = true
@@ -225,7 +245,7 @@ end
 local function createGUI()
     -- Удаляем старый GUI
     if player:FindFirstChild("PlayerGui") then
-        local oldGui = player.PlayerGui:FindFirstChild("HackMenu")
+        local oldGui = player.PlayerGui:FindFirstChild("doloscript")
         if oldGui then oldGui:Destroy() end
     end
 
@@ -248,8 +268,8 @@ local function createGUI()
     -- Основное меню
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 300, 0, 380)
-    mainFrame.Position = UDim2.new(0.5, -150, 0.5, -190)
+    mainFrame.Size = UDim2.new(0, 300, 0, 420)
+    mainFrame.Position = UDim2.new(0.5, -150, 0.5, -210)
     mainFrame.BackgroundColor3 = Color3.new(0.1, 0.1, 0.1)
     mainFrame.Visible = false
     mainFrame.Parent = screenGui
@@ -257,13 +277,14 @@ local function createGUI()
     -- Элементы меню
     local elements = {
         {Type = "TextLabel", Name = "Title", Text = "HACK MENU", Position = UDim2.new(0.1, 0, 0.03, 0), Size = UDim2.new(0, 280, 0, 30), TextSize = 20, BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold},
-        {Type = "TextButton", Name = "ESPToggle", Text = "ESP: OFF", Position = UDim2.new(0.1, 0, 0.12, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
-        {Type = "TextButton", Name = "SpeedToggle", Text = "SPEED: OFF", Position = UDim2.new(0.1, 0, 0.25, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
-        {Type = "TextBox", Name = "SpeedBox", Text = "16", PlaceholderText = "Speed value", Position = UDim2.new(0.1, 0, 0.38, 0), Size = UDim2.new(0, 280, 0, 30), BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)},
-        {Type = "TextButton", Name = "FlyToggle", Text = "FLY: OFF", Position = UDim2.new(0.1, 0, 0.51, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
-        {Type = "TextButton", Name = "FakeCharToggle", Text = "hitbox: OFF", Position = UDim2.new(0.1, 0, 0.64, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
-        {Type = "TextButton", Name = "RejoinButton", Text = "REJOIN SERVER", Position = UDim2.new(0.1, 0, 0.77, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.4, 0)},
-        {Type = "TextButton", Name = "CloseButton", Text = "CLOSE", Position = UDim2.new(0.1, 0, 0.9, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.2, 0.2, 0.8)}
+        {Type = "TextButton", Name = "ESPToggle", Text = "ESP: OFF", Position = UDim2.new(0.1, 0, 0.1, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextButton", Name = "SpeedToggle", Text = "SPEED: OFF", Position = UDim2.new(0.1, 0, 0.2, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextBox", Name = "SpeedBox", Text = "16", PlaceholderText = "Speed value", Position = UDim2.new(0.1, 0, 0.3, 0), Size = UDim2.new(0, 280, 0, 30), BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)},
+        {Type = "TextButton", Name = "FlyToggle", Text = "FLY: OFF", Position = UDim2.new(0.1, 0, 0.4, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextButton", Name = "FakeCharToggle", Text = "HITBOX: OFF", Position = UDim2.new(0.1, 0, 0.5, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextButton", Name = "ThirdPersonToggle", Text = "3RD PERSON: OFF", Position = UDim2.new(0.1, 0, 0.6, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)},
+        {Type = "TextButton", Name = "RejoinButton", Text = "REJOIN SERVER", Position = UDim2.new(0.1, 0, 0.7, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.8, 0.4, 0)},
+        {Type = "TextButton", Name = "CloseButton", Text = "CLOSE", Position = UDim2.new(0.1, 0, 0.8, 0), Size = UDim2.new(0, 280, 0, 35), BackgroundColor3 = Color3.new(0.2, 0.2, 0.8)}
     }
 
     for _, element in ipairs(elements) do
@@ -324,13 +345,21 @@ local function createGUI()
     mainFrame:FindFirstChild("FakeCharToggle").MouseButton1Click:Connect(function()
         fakeCharEnabled = not fakeCharEnabled
         local button = mainFrame:FindFirstChild("FakeCharToggle")
-        button.Text = fakeCharEnabled and "hitbox: ON" or "hitbox: OFF"
+        button.Text = fakeCharEnabled and "HITBOX: ON" or "HITBOX: OFF"
         button.BackgroundColor3 = fakeCharEnabled and Color3.new(0.2, 0.8, 0.2) or Color3.new(0.8, 0.2, 0.2)
         if fakeCharEnabled then
             createFakeCharacter()
         else
             removeFakeCharacter()
         end
+    end)
+
+    mainFrame:FindFirstChild("ThirdPersonToggle").MouseButton1Click:Connect(function()
+        thirdPersonEnabled = not thirdPersonEnabled
+        local button = mainFrame:FindFirstChild("ThirdPersonToggle")
+        button.Text = thirdPersonEnabled and "3RD PERSON: ON" or "3RD PERSON: OFF"
+        button.BackgroundColor3 = thirdPersonEnabled and Color3.new(0.2, 0.8, 0.2) or Color3.new(0.8, 0.2, 0.2)
+        updateThirdPerson()
     end)
 
     mainFrame:FindFirstChild("SpeedBox"):GetPropertyChangedSignal("Text"):Connect(function()
@@ -354,7 +383,7 @@ local function createGUI()
     end)
 end
 
--- ====================== Основные обработчики ====================== --
+-- ====================== ОСНОВНЫЕ ОБРАБОТЧИКИ ====================== --
 player.CharacterAdded:Connect(function()
     createGUI()
     if speedEnabled then 
@@ -364,6 +393,7 @@ player.CharacterAdded:Connect(function()
     if flyEnabled then startFlying() end
     if espEnabled then updateESP() end
     if fakeCharEnabled then createFakeCharacter() end
+    if thirdPersonEnabled then updateThirdPerson() end
 end)
 
 -- Первоначальная инициализация
